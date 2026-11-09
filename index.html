@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Amogus 2D - Огромная Карта</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #0c0f12;
+            font-family: sans-serif;
+            width: 100%;
+            height: 100%;
+        }
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            background-color: #111;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            padding: 20px;
+        }
+        .hud-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #ffffff;
+            font-weight: bold;
+            font-size: 16px;
+            background: rgba(0, 0, 0, 0.75);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            pointer-events: auto;
+            line-height: 1.6;
+        }
+        #action-buttons {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            gap: 20px;
+            pointer-events: auto;
+        }
+        .game-btn {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            border: 3px solid #ffffff;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            text-transform: uppercase;
+            background: rgba(0, 0, 0, 0.6);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            opacity: 0.3;
+            transition: opacity 0.2s, background-color 0.2s;
+        }
+        .game-btn.active-kill {
+            opacity: 1.0 !important;
+            background: #e74c3c !important;
+            border-color: #ff9f43 !important;
+        }
+        .game-btn.active-sabotage {
+            opacity: 1.0 !important;
+            background: #9b59b6 !important;
+            border-color: #a29bfe !important;
+        }
+        /* Зона джойстика теперь фиксированная на экране через HTML/CSS */
+        #joystick-container {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 140px;
+            height: 140px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            pointer-events: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #joystick-knob {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
+            position: absolute;
+            transition: transform 0.05s linear;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="ui-layer">
+            <div class="hud-panel" id="status-panel">
+                Роль: <span style="color: #e74c3c;">ПРЕДАТЕЛЬ</span><br>
+                Живых ботов: <span id="bots-count" style="color: #3498db;">5</span><br>
+                Починено саботажей: <span id="sabotage-count" style="color: #2ecc71;">0/3</span><br>
+                <span id="game-alert" style="color: #f1c40f; display:block; margin-top:5px;">Статус: Карта увеличена! Ищите ботов.</span>
+            </div>
+            
+            <div id="joystick-container">
+                <div id="joystick-knob"></div>
+            </div>
+
+            <div id="action-buttons">
+                <button class="game-btn" id="sabotage-btn">Саботаж</button>
+                <button class="game-btn" id="kill-btn">Убить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Игровое разрешение и ГИГАНТСКАЯ КАРТА
+        const VIRTUAL_WIDTH = 1280;
+        const VIRTUAL_HEIGHT = 720;
+        const MAP_WIDTH = 5000; 
+        const MAP_HEIGHT = 5000;
+
+        // Данные игрока (Предатель стал быстрее)
+        const player = {
+            x: MAP_WIDTH / 2,
+            y: MAP_HEIGHT / 2,
+            radius: 25,
+            speed: 450, 
+            vx: 0, vy: 0,
+            color: '#e74c3c'
+        };
+
+        let gameActive = true;
+        let activeSabotage = false;
+        let repairedSabotages = 0;
+        const requiredSabotagesToWin = 3;
+        let sabotageTimer = 0;
+
+        // Важные точки на огромной карте
+        const targets = {
+            generator: { x: 2500, y: 2500, radius: 60, color: '#9b59b6', name: 'Центральный Генератор (Саботаж)' },
+            taskA: { x: 800, y: 800, radius: 45, color: '#f1c40f', name: 'Верхний отсек (Задания)' },
+            taskB: { x: 4200, y: 4200, radius: 45, color: '#f1c40f', name: 'Нижний отсек (Задания)' },
+            taskC: { x: 4000, y: 800, radius: 45, color: '#f1c40f', name: 'Оружейная (Задания)' },
+            taskD: { x: 800, y: 4000, radius: 45, color: '#f1c40f', name: 'Навигация (Задания)' }
+        };
+
+        // Лабиринт из стен по всей огромной карте
+        const walls = [
+            // Вокруг центра
+            { x: 2200, y: 2100, width: 600, height: 40 },
+            { x: 2200, y: 2900, width: 600, height: 40 },
+            { x: 2100, y: 2200, width: 40, height: 600 },
+            { x: 2900, y: 2200, width: 40, height: 600 },
+            // Внутренние перегородки верхнего левого угла
+            { x: 500, y: 1200, width: 800, height: 50 },
+            { x: 1200, y: 500, width: 50, height: 800 },
+            // Перегородки нижнего правого угла
+            { x: 3500, y: 3500, width: 1000, height: 50 },
+            { x: 3500, y: 2500, width: 50, height: 1000 }
+        ];
+
+        const botColors = ['#3498db', '#2ecc71', '#f39c12', '#1abc9c', '#ffffcc'];
+        const bots = [];
+
+        // Рассеиваем 5 ботов по всей большой карте ближе к их точкам
+        const targetKeys = ['taskA', 'taskB', 'taskC', 'taskD', 'generator'];
+        for (let i = 0; i < 5; i++) {
+            const spawnPoint = targets[targetKeys[i]];
+            bots.push({
+                id: i,
+                x: spawnPoint.x + (Math.random() * 200 - 100),
+                y: spawnPoint.y + (Math.random() * 200 - 100),
+                radius: 25,
+                speed: 250, 
+                color: botColors[i],
+                isAlive: true,
+                targetPoint: null,
+                state: 'WANDERING'
+            });
+        }
